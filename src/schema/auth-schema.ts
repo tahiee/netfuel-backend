@@ -1,6 +1,13 @@
-import { pgTable, text, timestamp, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, boolean, integer } from "drizzle-orm/pg-core";
+
+/**
+ * better-auth core tables — extended with Netfuel app fields.
+ * Do NOT add foreign keys here pointing to app tables (circular deps).
+ * App-level relations live in schema.ts via userProfiles.
+ */
 
 export const users = pgTable("users", {
+  // ── better-auth required ──────────────────────────────────────────────────
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   email: text("email").notNull().unique(),
@@ -9,16 +16,32 @@ export const users = pgTable("users", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()
-    .$onUpdate(() => /* @__PURE__ */ new Date())
+    .$onUpdate(() => new Date())
     .notNull(),
+
+  // ── better-auth plugins ───────────────────────────────────────────────────
   twoFactorEnabled: boolean("two_factor_enabled").default(false),
-  role: text("role").default("user"),
-  banned: boolean("banned").default(false),
+
+  // ── Netfuel: access control ───────────────────────────────────────────────
+  // "user" | "admin" — checked in AdminLayout as user.userRoles !== "admin"
+  userRoles: text("user_roles").default("user").notNull(),
+  role: text("role").default("user"),           // kept for better-auth compat
+  banned: boolean("banned").default(false).notNull(),
   banReason: text("ban_reason"),
   banExpires: timestamp("ban_expires"),
-  is_super_admin: boolean("is_super_admin").default(false),
-  subadmin_id: text("subadmin_id"),
-  timezone: text("timezone").default("UTC"),
+  isSuperAdmin: boolean("is_super_admin").default(false).notNull(),
+
+  // ── Netfuel: profile extras ───────────────────────────────────────────────
+  phone: text("phone"),
+  company: text("company"),
+  jobTitle: text("job_title"),
+  timezone: text("timezone").default("UTC").notNull(),
+  locale: text("locale").default("en").notNull(),
+
+  // ── Netfuel: usage & limits (denormalized for fast reads) ─────────────────
+  // Canonical source is userProfiles; these are synced by cron/hooks
+  planSlug: text("plan_slug").default("free").notNull(),
+  brandCount: integer("brand_count").default(0).notNull(),
 });
 
 export const session = pgTable("session", {
@@ -27,7 +50,7 @@ export const session = pgTable("session", {
   token: text("token").notNull().unique(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
-    .$onUpdate(() => /* @__PURE__ */ new Date())
+    .$onUpdate(() => new Date())
     .notNull(),
   ipAddress: text("ip_address"),
   userAgent: text("user_agent"),
@@ -35,6 +58,7 @@ export const session = pgTable("session", {
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   impersonatedBy: text("impersonated_by"),
+  activeOrganizationId: text("active_organization_id"),
 });
 
 export const account = pgTable("account", {
@@ -53,7 +77,7 @@ export const account = pgTable("account", {
   password: text("password"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
-    .$onUpdate(() => /* @__PURE__ */ new Date())
+    .$onUpdate(() => new Date())
     .notNull(),
 });
 
@@ -65,7 +89,7 @@ export const verification = pgTable("verification", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()
-    .$onUpdate(() => /* @__PURE__ */ new Date())
+    .$onUpdate(() => new Date())
     .notNull(),
 });
 

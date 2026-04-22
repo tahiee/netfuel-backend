@@ -1,1642 +1,678 @@
 import {
-  text,
   pgTable,
-  integer,
-  varchar,
+  pgEnum,
+  text,
   boolean,
-  timestamp,
+  integer,
   decimal,
-  json,
+  timestamp,
+  date,
+  jsonb,
   index,
-  unique,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
-import crypto from "crypto";
+import { users } from "./auth-schema";
 
-export const users = pgTable(
-  "users",
+// Re-export all auth tables so drizzleAdapter and drizzle() both see them
+export * from "./auth-schema";
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+export const planSlugEnum = pgEnum("plan_slug", [
+  "free",
+  "pro",
+  "agency",
+  "custom",
+]);
+
+export const subscriptionStatusEnum = pgEnum("subscription_status", [
+  "trialing",
+  "active",
+  "past_due",
+  "canceled",
+  "incomplete",
+  "paused",
+]);
+
+export const queryFrequencyEnum = pgEnum("query_frequency", [
+  "manual",
+  "daily",
+  "weekly",
+]);
+
+export const queryRunStatusEnum = pgEnum("query_run_status", [
+  "success",
+  "cached",
+  "error",
+  "timeout",
+]);
+
+export const aiModelEnum = pgEnum("ai_model", [
+  "gpt-4o",
+  "gpt-4o-mini",
+  "gemini-pro",
+  "gemini-flash",
+  "claude-3-5-sonnet",
+  "claude-3-haiku",
+  "perplexity-sonar",
+  "perplexity-sonar-pro",
+  "grok-2",
+  "llama-3",
+]);
+
+export const redditMonitorStatusEnum = pgEnum("reddit_monitor_status", [
+  "idle",
+  "running",
+  "error",
+  "paused",
+]);
+
+export const sentimentEnum = pgEnum("sentiment", [
+  "positive",
+  "neutral",
+  "negative",
+]);
+
+export const apiServiceEnum = pgEnum("api_service", [
+  "openai",
+  "perplexity",
+  "gemini",
+  "reddit",
+  "sendgrid",
+  "stripe",
+  "custom",
+]);
+
+export const apiEnvEnum = pgEnum("api_env", ["production", "staging"]);
+
+export const announcementTypeEnum = pgEnum("announcement_type", [
+  "info",
+  "warning",
+  "success",
+  "error",
+]);
+
+export const announcementTargetEnum = pgEnum("announcement_target", [
+  "all",
+  "free",
+  "pro",
+  "agency",
+]);
+
+export const emailCategoryEnum = pgEnum("email_category", [
+  "transactional",
+  "automated",
+  "reengagement",
+]);
+
+export const invoiceStatusEnum = pgEnum("invoice_status", [
+  "paid",
+  "open",
+  "void",
+  "uncollectible",
+]);
+
+// ─── User Profiles ─────────────────────────────────────────────────────────────
+// Extends better-auth `users` table with billing + app-level data.
+
+export const userProfiles = pgTable(
+  "user_profiles",
   {
-    id: text("id").primaryKey(),
-    name: text("name").notNull(),
-    email: text("email").notNull().unique(),
-    emailVerified: boolean("email_verified")
-      .$defaultFn(() => false)
-      .notNull(),
-    twoFactorEnabled: boolean("two_factor_enabled")
-      .$defaultFn(() => false)
-      .notNull(),
-    image: text("image"),
-    phone: text("phone"),
-    address: text("address"),
-    role: text("role").$defaultFn(() => "user"), // Required by Better Auth admin plugin
-    status: text("status").$defaultFn(() => "pending"),
-    isOrganizationOwner: boolean("is_organization_owner").$defaultFn(
-      () => false,
-    ),
-    isOrganizationManager: boolean("is_organization_manager").$defaultFn(
-      () => false,
-    ),
-    isSuperAdmin: boolean("is_super_admin")
-      .$defaultFn(() => false)
-      .notNull(),
-    subadminId: text("subadmin_id"),
-    selectedPlanId: text("selected_plan_id"),
-    pendingOrganizationData: json("pending_organization_data").$type<{
-      organizationName?: string;
-      organizationWebsite?: string;
-      organizationIndustry?: string;
-      organizationSize?: string;
-      planId?: string;
-    }>(), // Store organization details before payment
-    timezone: text("timezone")
-      .$defaultFn(() => "UTC")
-      .notNull(),
-    notificationPreferences: json("notification_preferences")
-      .$type<{
-        paymentAlerts: boolean;
-        invoiceReminders: boolean;
-        projectActivityUpdates: boolean;
-        emailNotifications: boolean;
-        pushNotifications: boolean;
-        smsNotifications: boolean;
-        [key: string]: any;
-      }>()
-      .$defaultFn(() => ({
-        paymentAlerts: true,
-        invoiceReminders: true,
-        projectActivityUpdates: true,
-        emailNotifications: true,
-        pushNotifications: true,
-        smsNotifications: true,
-      })),
-    createdAt: timestamp("created_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-    updatedAt: timestamp("updated_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-  },
-  (table) => ({
-    emailIdx: index("users_email_idx").on(table.email),
-    superAdminIdx: index("users_super_admin_idx").on(table.isSuperAdmin),
-  }),
-);
-
-export const twoFactor = pgTable("two_factor", {
-  id: text("id").primaryKey(),
-  userId: text("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  secret: text("secret").notNull(),
-  backupCodes: json("backup_codes").$type<string[]>(),
-  createdAt: timestamp("created_at")
-    .$defaultFn(() => new Date())
-    .notNull(),
-});
-
-export const twoFactorBackupCodes = pgTable("two_factor_backup_codes", {
-  id: text("id").primaryKey(),
-  twoFactorId: text("two_factor_id")
-    .notNull()
-    .references(() => twoFactor.id, { onDelete: "cascade" }),
-  code: text("code").notNull(),
-  used: boolean("used")
-    .$defaultFn(() => false)
-    .notNull(),
-  createdAt: timestamp("created_at")
-    .$defaultFn(() => new Date())
-    .notNull(),
-});
-
-// ==================== SUBSCRIPTION PLANS ====================
-
-export const subscriptionPlans = pgTable(
-  "subscription_plans",
-  {
-    id: text("id")
-      .primaryKey()
-      .$defaultFn(() => crypto.randomUUID()),
-    name: text("name").notNull(), // "Free", "Basic", "Pro", "Enterprise"
-    slug: text("slug").notNull().unique(), // "free", "basic", "pro", "enterprise"
-    description: text("description"),
-    customPlanName: text("custom_plan_name"),
-    price: decimal("price", { precision: 10, scale: 2 }).notNull(),
-    currency: text("currency")
-      .$defaultFn(() => "USD")
-      .notNull(),
-    billingCycle: text("billing_cycle")
-      .$defaultFn(() => "monthly")
-      .notNull(),
-    durationValue: integer("duration_value"),
-    durationType: text("duration_type"),
-    trialDays: integer("trial_days").$defaultFn(() => 7), // Number of trial days (default 7, 0 = no trial)
-    features: json("features").$type<{
-      maxUsers: number;
-      maxProjects: number;
-      maxStorage: number; // in GB
-      maxTasks: number;
-      aiAssist: boolean;
-      prioritySupport: boolean;
-      calendarAccess?: boolean;
-      taskManagement?: boolean;
-      timeTracking?: boolean;
-      customFeatures?: string[];
-      [key: string]: any;
-    }>(),
-    isActive: boolean("is_active")
-      .$defaultFn(() => true)
-      .notNull(),
-    sortOrder: integer("sort_order")
-      .$defaultFn(() => 0)
-      .notNull(),
-    createdAt: timestamp("created_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-    updatedAt: timestamp("updated_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-  },
-  (table) => ({
-    slugIdx: index("subscription_plans_slug_idx").on(table.slug),
-    activeIdx: index("subscription_plans_active_idx").on(table.isActive),
-  }),
-);
-
-// ==================== ORGANIZATIONS ====================
-
-export const organizations = pgTable(
-  "organizations",
-  {
-    id: text("id").primaryKey(),
-    name: text("name").notNull(),
-    slug: text("slug").notNull().unique(),
-    description: text("description"),
-    logo: text("logo"),
-    logoPublicId: text("logo_public_id"),
-    website: text("website"),
-    industry: text("industry"),
-    size: text("size"), // "1-10", "11-50", "51-200", "200+"
-    status: text("status").$defaultFn(() => "active"),
-    subscriptionPlanId: text("subscription_plan_id").references(
-      () => subscriptionPlans.id,
-    ),
-    subscriptionStatus: text("subscription_status").$defaultFn(() => "active"),
-    subscriptionStartDate: timestamp("subscription_start_date"),
-    subscriptionEndDate: timestamp("subscription_end_date"),
-    trialEndsAt: timestamp("trial_ends_at"),
-    maxUsers: integer("max_users").$defaultFn(() => 5),
-    maxProjects: integer("max_projects").$defaultFn(() => 3),
-    maxStorage: integer("max_storage").$defaultFn(() => 1), // in GB
-    settings: json("settings").$type<{
-      timezone: string;
-      dateFormat: string;
-      currency: string;
-      language: string;
-      notifications: {
-        email: boolean;
-        push: boolean;
-        sms: boolean;
-      };
-      // Demo account related fields
-      demo?: boolean;
-      demoCreatedAt?: string;
-      demoCreatedBy?: string | null;
-      demoRole?: string;
-      passwordChanged?: boolean;
-      [key: string]: any;
-    }>(),
-    createdAt: timestamp("created_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-    updatedAt: timestamp("updated_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-  },
-  (table) => ({
-    slugIdx: index("organizations_slug_idx").on(table.slug),
-    statusIdx: index("organizations_status_idx").on(table.status),
-    subscriptionIdx: index("organizations_subscription_idx").on(
-      table.subscriptionStatus,
-    ),
-  }),
-);
-
-export const userOrganizations = pgTable(
-  "user_organizations",
-  {
-    id: text("id").primaryKey(),
     userId: text("user_id")
-      .notNull()
+      .primaryKey()
       .references(() => users.id, { onDelete: "cascade" }),
-    organizationId: text("organization_id")
-      .notNull()
-      .references(() => organizations.id, { onDelete: "cascade" }),
-    role: text("role")
-      .notNull()
-      .$defaultFn(() => "member"),
-    status: text("status")
-      .notNull()
-      .$defaultFn(() => "active"),
-    permissions: json("permissions").$type<{
-      canManageUsers: boolean;
-      canManageProjects: boolean;
-      canManageBilling: boolean;
-      canViewAnalytics: boolean;
-      canInviteUsers: boolean;
-      [key: string]: boolean;
-    }>(),
-    invitedBy: text("invited_by").references(() => users.id),
-    invitedAt: timestamp("invited_at"),
-    joinedAt: timestamp("joined_at"),
-    createdAt: timestamp("created_at")
-      .$defaultFn(() => new Date())
+    plan: planSlugEnum("plan").default("free").notNull(),
+    stripeCustomerId: text("stripe_customer_id").unique(),
+    onboardingCompleted: boolean("onboarding_completed")
+      .default(false)
       .notNull(),
-    updatedAt: timestamp("updated_at")
-      .$defaultFn(() => new Date())
+    // Usage counters (reset monthly by cron)
+    apiCallsToday: integer("api_calls_today").default(0).notNull(),
+    apiCallsMonth: integer("api_calls_month").default(0).notNull(),
+    creditsUsed: integer("credits_used").default(0).notNull(),
+    creditsLimit: integer("credits_limit").default(100).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
       .notNull(),
   },
-  (table) => ({
-    userOrgIdx: index("user_organizations_user_org_idx").on(
-      table.userId,
-      table.organizationId,
-    ),
-    roleIdx: index("user_organizations_role_idx").on(table.role),
-    statusIdx: index("user_organizations_status_idx").on(table.status),
-  }),
+  (t) => [index("idx_user_profiles_stripe").on(t.stripeCustomerId)]
 );
 
-// ==================== SUB ADMIN TABLE ====================
+// ─── Plans ─────────────────────────────────────────────────────────────────────
 
-export const subadmin = pgTable("subadmin", {
+export const plans = pgTable("plans", {
   id: text("id").primaryKey(),
-  firstName: text("first_name").notNull(),
-  lastName: text("last_name").notNull(),
-  email: text("email").notNull().unique(),
-  contactNumber: text("contact_number"),
-  permission: text("permission")
-    .notNull()
-    .$defaultFn(() => "Sub Admin"),
-  password: text("password"),
-  logo: text("logo"),
-  logoPublicId: text("logo_public_id"),
-  createdBy: text("created_by").references(() => users.id, {
-    onDelete: "set null",
-  }),
-  createdAt: timestamp("created_at")
-    .$defaultFn(() => new Date())
+  name: text("name").notNull(),
+  slug: planSlugEnum("slug").notNull().unique(),
+  description: text("description"),
+  priceMonthly: decimal("price_monthly", { precision: 10, scale: 2 }).notNull(),
+  priceYearly: decimal("price_yearly", { precision: 10, scale: 2 }).notNull(),
+  brandLimit: integer("brand_limit").notNull(), // -1 = unlimited
+  queryLimitMonthly: integer("query_limit_monthly").notNull(),
+  redditMonitorsLimit: integer("reddit_monitors_limit").notNull(),
+  teamSeats: integer("team_seats").default(1).notNull(),
+  features: jsonb("features")
+    .$type<Record<string, boolean>>()
+    .default({})
     .notNull(),
-  updatedAt: timestamp("updated_at")
-    .$defaultFn(() => new Date())
+  isActive: boolean("is_active").default(true).notNull(),
+  isCustom: boolean("is_custom").default(false).notNull(),
+  stripePriceIdMonthly: text("stripe_price_id_monthly"),
+  stripePriceIdYearly: text("stripe_price_id_yearly"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
     .notNull(),
 });
 
-// ==================== PROJECTS ====================
-
-export const projects = pgTable(
-  "projects",
-  {
-    id: text("id").primaryKey().notNull(),
-    name: text("name").notNull(),
-    projectNumber: text("project_number").notNull(),
-    clientId: text("client_id").references(() => clients.id, {
-      onDelete: "cascade",
-    }),
-    description: text("description"),
-    organizationId: text("organization_id")
-      .notNull()
-      .references(() => organizations.id, { onDelete: "cascade" }),
-    createdBy: text("created_by")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    assignedTo: text("assigned_to").references(() => users.id, {
-      onDelete: "set null",
-    }),
-    status: text("status").$defaultFn(() => "active"),
-    visibility: text("visibility")
-      .$type<"public" | "private">()
-      .default("private"),
-    startDate: timestamp("start_date"),
-    endDate: timestamp("end_date"),
-    progress: integer("progress").$defaultFn(() => 0),
-    address: text("address"),
-    budget: decimal("budget", { precision: 10, scale: 2 }),
-    contractfile: text("contractfile"),
-    contractfilePublicId: text("contractfile_public_id"), // For Cloudinary
-    projectFiles: json("project_files").$type<{
-      projectPdf?: {
-        url: string;
-        publicId: string;
-        name: string;
-        type: string;
-        size?: number;
-      };
-      totalSize?: number;
-    }>(),
-    tags: json("tags").$type<string[]>(),
-    customFields: json("custom_fields").$type<Record<string, any>>(),
-    settings: json("settings").$type<{
-      allowGuestAccess: boolean;
-      autoAssignTasks: boolean;
-      requireApproval: boolean;
-      [key: string]: any;
-    }>(),
-    createdAt: timestamp("created_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-    updatedAt: timestamp("updated_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-    position: integer("position").default(0).notNull(),
-  },
-  (table) => ({
-    orgIdx: index("projects_organization_idx").on(table.organizationId),
-    statusIdx: index("projects_status_idx").on(table.status),
-    createdByIdx: index("projects_created_by_idx").on(table.createdBy),
-    clientIdx: index("projects_client_idx").on(table.clientId),
-    assignedToIdx: index("projects_assigned_to_idx").on(table.assignedTo),
-    projectNumberIdx: index("projects_project_number_idx").on(
-      table.projectNumber,
-    ),
-    // Composite index for getProjectById query optimization
-    orgIdIdx: index("projects_org_id_idx").on(table.organizationId, table.id),
-    positionIdx: index("projects_position_idx").on(table.position),
-  }),
-);
-
-// ==================== PROJECT COMMENTS ====================
-
-export const projectComments = pgTable(
-  "project_comments",
-  {
-    id: text("id")
-      .primaryKey()
-      .$defaultFn(() => crypto.randomUUID())
-      .notNull(),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
-    userId: text("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    content: text("content").notNull(),
-    parentId: text("parent_id"), // Self-reference for replies - will be handled in relations
-    createdAt: timestamp("created_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-    updatedAt: timestamp("updated_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-  },
-  (table) => ({
-    projectIdx: index("project_comments_project_idx").on(table.projectId),
-    userIdx: index("project_comments_user_idx").on(table.userId),
-    parentIdx: index("project_comments_parent_idx").on(table.parentId),
-    createdAtIdx: index("project_comments_created_at_idx").on(table.createdAt),
-  }),
-);
-
-// ==================== TASKS ====================
-
-export const tasks = pgTable(
-  "tasks",
-  {
-    id: text("id")
-      .primaryKey()
-      .$defaultFn(() => crypto.randomUUID()),
-    title: text("title").notNull(),
-    description: text("description"),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
-    assignedTo: text("assigned_to").references(() => users.id, {
-      onDelete: "set null",
-    }),
-    createdBy: text("created_by")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    status: text("status")
-      .$type<
-        "todo" | "in_progress" | "completed" | "updated" | "delay" | "changes"
-      >()
-      .$defaultFn(() => "todo"),
-    visibility: text("visibility")
-      .$type<"public" | "private">()
-      .default("private"),
-    endDate: timestamp("end_date"),
-    startAfter: text("start_after"),
-    finishBefore: text("finish_before"),
-    startDate: timestamp("start_date"),
-    estimatedHours: decimal("estimated_hours", { precision: 10, scale: 2 }),
-    actualHours: decimal("actual_hours", { precision: 10, scale: 2 }),
-    attachments: json("attachments").$type<
-      {
-        id: string;
-        name: string;
-        url: string;
-        size: number;
-        type: string;
-      }[]
-    >(),
-    parentId: text("parent_id").references((): any => tasks.id, {
-      onDelete: "cascade",
-    }),
-    createdAt: timestamp("created_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-    updatedAt: timestamp("updated_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-  },
-  (table) => ({
-    projectIdx: index("tasks_project_idx").on(table.projectId),
-    assignedToIdx: index("tasks_assigned_to_idx").on(table.assignedTo),
-    statusIdx: index("tasks_status_idx").on(table.status),
-    dueDateIdx: index("tasks_end_date_idx").on(table.endDate),
-    parentIdIdx: index("tasks_parent_id_idx").on(table.parentId),
-  }),
-);
-
-// ==================== BILLING & PAYMENTS ====================
+// ─── Subscriptions ─────────────────────────────────────────────────────────────
 
 export const subscriptions = pgTable(
   "subscriptions",
   {
     id: text("id").primaryKey(),
-    organizationId: text("organization_id")
+    userId: text("user_id")
       .notNull()
-      .references(() => organizations.id, { onDelete: "cascade" }),
+      .references(() => users.id, { onDelete: "cascade" }),
     planId: text("plan_id")
       .notNull()
-      .references(() => subscriptionPlans.id),
-    status: text("status").notNull(), // active, cancelled, past_due, unpaid
-    currentPeriodStart: timestamp("current_period_start").notNull(),
-    currentPeriodEnd: timestamp("current_period_end").notNull(),
-    cancelAtPeriodEnd: boolean("cancel_at_period_end").$defaultFn(() => false),
-    cancelledAt: timestamp("cancelled_at"),
-    trialStart: timestamp("trial_start"),
-    trialEnd: timestamp("trial_end"),
+      .references(() => plans.id),
+    status: subscriptionStatusEnum("status").notNull(),
     stripeSubscriptionId: text("stripe_subscription_id").unique(),
     stripeCustomerId: text("stripe_customer_id"),
-    metadata: json("metadata"),
-    createdAt: timestamp("created_at")
-      .$defaultFn(() => new Date())
+    currentPeriodStart: timestamp("current_period_start", {
+      withTimezone: true,
+    }),
+    currentPeriodEnd: timestamp("current_period_end", { withTimezone: true }),
+    cancelAtPeriodEnd: boolean("cancel_at_period_end").default(false).notNull(),
+    trialEnd: timestamp("trial_end", { withTimezone: true }),
+    canceledAt: timestamp("canceled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
       .notNull(),
-    updatedAt: timestamp("updated_at")
-      .$defaultFn(() => new Date())
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
       .notNull(),
   },
-  (table) => ({
-    orgIdx: index("subscriptions_organization_idx").on(table.organizationId),
-    statusIdx: index("subscriptions_status_idx").on(table.status),
-    stripeIdx: index("subscriptions_stripe_idx").on(table.stripeSubscriptionId),
-  }),
+  (t) => [
+    index("idx_subscriptions_user").on(t.userId),
+    index("idx_subscriptions_status").on(t.status),
+  ]
 );
+
+// ─── Invoices ──────────────────────────────────────────────────────────────────
 
 export const invoices = pgTable(
   "invoices",
   {
-    id: text("id")
-      .primaryKey()
-      .$defaultFn(() => crypto.randomUUID()),
-    organizationId: text("organization_id")
-      .notNull()
-      .references(() => organizations.id, { onDelete: "cascade" }),
-    clientId: text("client_id")
-      .notNull()
-      .references(() => clients.id, { onDelete: "cascade" }),
-    createdBy: text("created_by")
-      .notNull()
-      .references(() => users.id),
-    invoiceNumber: text("invoice_number").notNull().unique(),
-    clientname: text("client_name").notNull(),
-    amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
-    status: text("status")
-      .$defaultFn(() => "draft")
-      .notNull(), // draft, sent, paid, overdue, cancelled
-    datepaid: timestamp("date_paid"),
-    dueDate: timestamp("due_date"),
-    description: text("description"),
-    pdfUrl: text("pdf_url"), // URL to generated PDF file
-    pdfFileName: text("pdf_file_name"), // Original PDF filename
-    pdfFileSize: integer("pdf_file_size"), // PDF file size in bytes
-    createdAt: timestamp("created_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-    updatedAt: timestamp("updated_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-  },
-  (table) => ({
-    orgIdx: index("invoices_organization_idx").on(table.organizationId),
-    clientIdx: index("invoices_client_idx").on(table.clientId),
-    statusIdx: index("invoices_status_idx").on(table.status),
-    invoiceNumberIdx: index("invoices_invoice_number_idx").on(
-      table.invoiceNumber,
-    ),
-    createdByIdx: index("invoices_created_by_idx").on(table.createdBy),
-  }),
-);
-
-export const recurringInvoices = pgTable(
-  "recurring_invoices",
-  {
-    id: text("id")
-      .primaryKey()
-      .$defaultFn(() => crypto.randomUUID()),
-    organizationId: text("organization_id")
-      .notNull()
-      .references(() => organizations.id, { onDelete: "cascade" }),
-    clientId: text("client_id")
-      .notNull()
-      .references(() => clients.id, { onDelete: "cascade" }),
-    createdBy: text("created_by")
-      .notNull()
-      .references(() => users.id),
-    templateName: text("template_name").notNull(),
-    clientname: text("client_name").notNull(),
-    amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
-    description: text("description"),
-    frequency: text("frequency")
-      .$type<"daily" | "weekly" | "monthly" | "yearly">()
-      .notNull(),
-    startDate: timestamp("start_date").notNull(),
-    endDate: timestamp("end_date"),
-    lastRunDate: timestamp("last_run_date"),
-    nextRunDate: timestamp("next_run_date").notNull(),
-    status: text("status")
-      .$defaultFn(() => "active")
-      .notNull(), // active, paused, completed
-    createdAt: timestamp("created_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-    updatedAt: timestamp("updated_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-  },
-  (table) => ({
-    orgIdx: index("recurring_invoices_organization_idx").on(table.organizationId),
-    clientIdx: index("recurring_invoices_client_idx").on(table.clientId),
-    statusIdx: index("recurring_invoices_status_idx").on(table.status),
-    nextRunIdx: index("recurring_invoices_next_run_idx").on(table.nextRunDate),
-  }),
-);
-
-// ==================== AUTH TABLES (Better Auth) ====================
-
-export const session = pgTable("session", {
-  id: text("id").primaryKey(),
-  expiresAt: timestamp("expires_at").notNull(),
-  token: text("token").notNull().unique(),
-  createdAt: timestamp("created_at").notNull(),
-  updatedAt: timestamp("updated_at").notNull(),
-  ipAddress: text("ip_address"),
-  userAgent: text("user_agent"),
-  userId: text("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-});
-
-export const account = pgTable(
-  "account",
-  {
     id: text("id").primaryKey(),
-    accountId: text("account_id").notNull(),
-    providerId: text("provider_id").notNull(),
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    accessToken: text("access_token"),
-    refreshToken: text("refresh_token"),
-    idToken: text("id_token"),
-    accessTokenExpiresAt: timestamp("access_token_expires_at"),
-    refreshTokenExpiresAt: timestamp("refresh_token_expires_at"),
-    scope: text("scope"),
-    password: text("password"),
-    createdAt: timestamp("created_at").notNull(),
-    updatedAt: timestamp("updated_at").notNull(),
-  },
-  (table) => ({
-    // Add unique constraint for (userId, providerId) combination
-    userProviderUnique: unique("user_provider_unique").on(
-      table.userId,
-      table.providerId,
-    ),
-  }),
-);
-
-export const verification = pgTable("verification", {
-  id: text("id").primaryKey(),
-  identifier: text("identifier").notNull(),
-  value: text("value").notNull(),
-  expiresAt: timestamp("expires_at").notNull(),
-  createdAt: timestamp("created_at").$defaultFn(() => new Date()),
-  updatedAt: timestamp("updated_at").$defaultFn(() => new Date()),
-});
-
-// ==================== RATE LIMITING ====================
-
-export const throttleinsight = pgTable("throttle_insight", {
-  waitTime: integer("wait_time").notNull(),
-  msBeforeNext: integer("ms_before_next").notNull(),
-  endPoint: varchar("end_point", { length: 225 }),
-  pointsAllotted: integer("allotted_points").notNull(),
-  consumedPoints: integer("consumed_points").notNull(),
-  remainingPoints: integer("remaining_points").notNull(),
-  key: varchar("key", { length: 225 }).primaryKey().notNull(),
-  isFirstInDuration: boolean("is_first_in_duration").notNull(),
-});
-
-// ==================== USER MANAGEMENT ====================
-export const userManagement = pgTable(
-  "user_management",
-  {
-    id: text("id").primaryKey(),
-    firstname: text("firstname").notNull(),
-    lastname: text("lastname").notNull(),
-    email: text("email").notNull().unique(),
-    companyname: text("companyname").notNull(),
-    phonenumber: text("phonenumber").notNull(),
-    userrole: text("userrole").notNull(),
-    setpermission: text("setpermission").notNull(),
-    password: text("password").notNull(),
-    organizationId: text("organization_id")
-      .notNull()
-      .references(() => organizations.id, { onDelete: "cascade" }),
-    status: text("status")
-      .$defaultFn(() => "active")
-      .notNull(), // active, inactive, suspended
-    isActive: boolean("is_active")
-      .$defaultFn(() => true)
-      .notNull(),
-    lastLoginAt: timestamp("last_login_at"),
-    loginAttempts: integer("login_attempts").$defaultFn(() => 0),
-    lockedUntil: timestamp("locked_until"),
-    createdBy: text("created_by")
-      .notNull()
-      .references(() => users.id),
-    createdAt: timestamp("created_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-    updatedAt: timestamp("updated_at")
-      .$defaultFn(() => new Date())
+    subscriptionId: text("subscription_id").references(() => subscriptions.id),
+    stripeInvoiceId: text("stripe_invoice_id").unique(),
+    amountCents: integer("amount_cents").notNull(),
+    currency: text("currency").default("usd").notNull(),
+    status: invoiceStatusEnum("status").notNull(),
+    periodStart: timestamp("period_start", { withTimezone: true }),
+    periodEnd: timestamp("period_end", { withTimezone: true }),
+    invoiceUrl: text("invoice_url"),
+    pdfUrl: text("pdf_url"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
       .notNull(),
   },
-  (table) => ({
-    emailIdx: index("user_management_email_idx").on(table.email),
-    orgIdx: index("user_management_organization_idx").on(table.organizationId),
-    statusIdx: index("user_management_status_idx").on(table.status),
-    roleIdx: index("user_management_role_idx").on(table.userrole),
-  }),
+  (t) => [index("idx_invoices_user").on(t.userId)]
 );
 
-// ==================== PROJECT EXPENSES ====================
+// ─── Brands ────────────────────────────────────────────────────────────────────
 
-export const projectExpenses = pgTable(
-  "project_expenses",
-  {
-    id: text("id")
-      .primaryKey()
-      .$defaultFn(() => crypto.randomUUID()),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
-    amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
-    category: text("category").notNull(),
-    description: text("description").notNull(),
-    date: timestamp("date").notNull(),
-    createdBy: text("created_by")
-      .notNull()
-      .references(() => users.id),
-    createdAt: timestamp("created_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-    updatedAt: timestamp("updated_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-  },
-  (table) => ({
-    projectIdx: index("project_expenses_project_idx").on(table.projectId),
-    categoryIdx: index("project_expenses_category_idx").on(table.category),
-    dateIdx: index("project_expenses_date_idx").on(table.date),
-  }),
-);
-
-// ==================== FILES & VERSIONS ====================
-
-export const files = pgTable(
-  "files",
-  {
-    id: text("id")
-      .primaryKey()
-      .$defaultFn(() => crypto.randomUUID()),
-    name: text("name").notNull(),
-    organizationId: text("organization_id")
-      .notNull()
-      .references(() => organizations.id, { onDelete: "cascade" }),
-    projectId: text("project_id").references(() => projects.id, {
-      onDelete: "cascade",
-    }),
-    taskId: text("task_id").references(() => tasks.id, {
-      onDelete: "cascade",
-    }),
-    clientId: text("client_id").references(() => clients.id, {
-      onDelete: "cascade",
-    }),
-    uploadedBy: text("uploaded_by")
-      .notNull()
-      .references(() => users.id),
-    createdAt: timestamp("created_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-    updatedAt: timestamp("updated_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-  },
-  (table) => ({
-    orgIdx: index("files_organization_idx").on(table.organizationId),
-    projectIdx: index("files_project_idx").on(table.projectId),
-    taskIdx: index("files_task_idx").on(table.taskId),
-    clientIdx: index("files_client_idx").on(table.clientId),
-  }),
-);
-
-export const fileVersions = pgTable(
-  "file_versions",
-  {
-    id: text("id")
-      .primaryKey()
-      .$defaultFn(() => crypto.randomUUID()),
-    fileId: text("file_id")
-      .notNull()
-      .references(() => files.id, { onDelete: "cascade" }),
-    url: text("url").notNull(),
-    name: text("name").notNull(),
-    size: integer("size").notNull(),
-    type: text("type").notNull(),
-    versionNumber: integer("version_number").notNull(),
-    uploadedBy: text("uploaded_by")
-      .notNull()
-      .references(() => users.id),
-    createdAt: timestamp("created_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-  },
-  (table) => ({
-    fileIdx: index("file_versions_file_idx").on(table.fileId),
-    versionIdx: index("file_versions_version_idx").on(table.versionNumber),
-  }),
-);
-
-
-// ==================== CLIENT MANAGEMENT ====================
-
-export const clients = pgTable(
-  "clients",
-  {
-    id: text("id").primaryKey(),
-    organizationId: text("organization_id")
-      .notNull()
-      .references(() => organizations.id, { onDelete: "cascade" }),
-    userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),
-    name: text("name").notNull(),
-    email: text("email").notNull(),
-    image: text("image"),
-    imagePublicId: text("image_public_id"), // For Cloudinary
-    phone: text("phone"),
-    cpfcnpj: text("cpf_cnpj_number"),
-    businessIndustry: text("business_industry"),
-    address: text("address"),
-    socialMediaLinks: json("social_media_links").$type<
-      Array<{
-        type: string;
-        url: string;
-      }>
-    >(),
-    customFields: json("custom_fields").$type<Record<string, any>>(),
-    status: text("status").$defaultFn(() => "New Lead"),
-    createdBy: text("created_by")
-      .notNull()
-      .references(() => users.id),
-    createdAt: timestamp("created_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-    updatedAt: timestamp("updated_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-    position: integer("position").default(0).notNull(),
-  },
-  (table) => ({
-    orgIdx: index("clients_organization_idx").on(table.organizationId),
-    userIdx: index("clients_user_idx").on(table.userId),
-    statusIdx: index("clients_status_idx").on(table.status),
-    emailIdx: index("clients_email_idx").on(table.email),
-    emailOrgIdx: index("clients_email_org_idx").on(
-      table.email,
-      table.organizationId,
-    ),
-    positionIdx: index("clients_position_idx").on(table.position),
-  }),
-);
-
-// ==================== TIME TRACKING ====================
-
-export const timeEntries = pgTable(
-  "time_entries",
+export const brands = pgTable(
+  "brands",
   {
     id: text("id").primaryKey(),
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
-    taskId: text("task_id").references(() => tasks.id, { onDelete: "cascade" }),
-    clientId: text("client_id").references(() => clients.id),
+    name: text("name").notNull(),
+    slug: text("slug").notNull(),
+    website: text("website"),
     description: text("description"),
-    startTime: timestamp("start_time").notNull(),
-    endTime: timestamp("end_time"),
-    duration: integer("duration"), // in minutes
-    billable: boolean("billable").$defaultFn(() => true),
-    hourlyRate: decimal("hourly_rate", { precision: 10, scale: 2 }),
-    status: text("status").$defaultFn(() => "active"), // active, paused, completed
-    tags: json("tags").$type<string[]>(),
-    createdAt: timestamp("created_at")
-      .$defaultFn(() => new Date())
+    industry: text("industry"),
+    country: text("country"),
+    logoUrl: text("logo_url"),
+    keywords: text("keywords").array().default([]).notNull(),
+    competitors: text("competitors").array().default([]).notNull(),
+    targetModels: text("target_models").array().default([]).notNull(),
+    isActive: boolean("is_active").default(true).notNull(),
+    // Cached latest score (updated after each run batch)
+    latestScore: decimal("latest_score", { precision: 5, scale: 2 }),
+    totalQueriesRun: integer("total_queries_run").default(0).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
       .notNull(),
-    updatedAt: timestamp("updated_at")
-      .$defaultFn(() => new Date())
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
       .notNull(),
   },
-  (table) => ({
-    userIdx: index("time_entries_user_idx").on(table.userId),
-    projectIdx: index("time_entries_project_idx").on(table.projectId),
-    taskIdx: index("time_entries_task_idx").on(table.taskId),
-    startTimeIdx: index("time_entries_start_time_idx").on(table.startTime),
-  }),
+  (t) => [
+    index("idx_brands_user").on(t.userId),
+    uniqueIndex("idx_brands_user_slug").on(t.userId, t.slug),
+  ]
 );
 
-// ==================== NOTIFICATIONS ====================
+// ─── Brand Queries (prompt templates) ─────────────────────────────────────────
 
-export const notifications = pgTable(
-  "notifications",
+export const brandQueries = pgTable(
+  "brand_queries",
   {
     id: text("id").primaryKey(),
+    brandId: text("brand_id")
+      .notNull()
+      .references(() => brands.id, { onDelete: "cascade" }),
+    prompt: text("prompt").notNull(),
+    context: text("context"), // optional extra context injected before prompt
+    frequency: queryFrequencyEnum("frequency").default("manual").notNull(),
+    targetModels: text("target_models").array().default([]).notNull(),
+    isActive: boolean("is_active").default(true).notNull(),
+    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }),
+    totalRuns: integer("total_runs").default(0).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [index("idx_brand_queries_brand").on(t.brandId)]
+);
+
+// ─── AI Query Runs (individual model execution results) ────────────────────────
+
+export const aiQueryRuns = pgTable(
+  "ai_query_runs",
+  {
+    id: text("id").primaryKey(),
+    queryId: text("query_id")
+      .notNull()
+      .references(() => brandQueries.id, { onDelete: "cascade" }),
+    brandId: text("brand_id")
+      .notNull()
+      .references(() => brands.id, { onDelete: "cascade" }),
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    organizationId: text("organization_id").references(() => organizations.id),
-    type: text("type").notNull(), // task_assigned, project_updated, billing, system
-    title: text("title").notNull(),
-    message: text("message").notNull(),
-    data: json("data"), // Additional data for the notification
-    read: boolean("read").$defaultFn(() => false),
-    readAt: timestamp("read_at"),
-    expiresAt: timestamp("expires_at"),
-    createdAt: timestamp("created_at")
-      .$defaultFn(() => new Date())
+    model: text("model").notNull(), // free-text to support new models
+    modelResponse: text("model_response"), // full AI response text
+    mentioned: boolean("mentioned").default(false).notNull(),
+    cited: boolean("cited").default(false).notNull(),
+    mentionPosition: integer("mention_position"), // 1=first mention, null=not found
+    visibilityScore: decimal("visibility_score", { precision: 5, scale: 2 }),
+    sentiment: sentimentEnum("sentiment"),
+    costUsd: decimal("cost_usd", { precision: 10, scale: 6 }),
+    tokensUsed: integer("tokens_used"),
+    durationMs: integer("duration_ms"),
+    status: queryRunStatusEnum("status").notNull(),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
       .notNull(),
   },
-  (table) => ({
-    userIdx: index("notifications_user_idx").on(table.userId),
-    readIdx: index("notifications_read_idx").on(table.read),
-    typeIdx: index("notifications_type_idx").on(table.type),
-  }),
+  (t) => [
+    index("idx_ai_runs_brand").on(t.brandId),
+    index("idx_ai_runs_query").on(t.queryId),
+    index("idx_ai_runs_user").on(t.userId),
+    index("idx_ai_runs_created").on(t.createdAt),
+  ]
 );
 
-// ==================== AUDIT LOGS ====================
+// ─── Brand Daily Scores (aggregated for charts) ───────────────────────────────
 
-export const auditLogs = pgTable(
-  "audit_logs",
+export const brandDailyScores = pgTable(
+  "brand_daily_scores",
   {
     id: text("id").primaryKey(),
-    organizationId: text("organization_id").references(() => organizations.id),
-    userId: text("user_id").references(() => users.id),
-    action: text("action").notNull(), // create, update, delete, login, etc.
-    resource: text("resource").notNull(), // user, project, task, etc.
-    resourceId: text("resource_id"),
-    oldValues: json("old_values"),
-    newValues: json("new_values"),
+    brandId: text("brand_id")
+      .notNull()
+      .references(() => brands.id, { onDelete: "cascade" }),
+    scoreDate: date("score_date").notNull(),
+    avgScore: decimal("avg_score", { precision: 5, scale: 2 }).notNull(),
+    queriesRun: integer("queries_run").default(0).notNull(),
+    mentionsCount: integer("mentions_count").default(0).notNull(),
+    citationsCount: integer("citations_count").default(0).notNull(),
+    totalCostUsd: decimal("total_cost_usd", { precision: 10, scale: 6 }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    index("idx_daily_scores_brand").on(t.brandId),
+    uniqueIndex("idx_daily_scores_brand_date").on(t.brandId, t.scoreDate),
+  ]
+);
+
+// ─── Reddit Monitors ──────────────────────────────────────────────────────────
+
+export const redditMonitors = pgTable(
+  "reddit_monitors",
+  {
+    id: text("id").primaryKey(),
+    brandId: text("brand_id")
+      .notNull()
+      .references(() => brands.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    subreddits: text("subreddits").array().default([]).notNull(),
+    keywords: text("keywords").array().default([]).notNull(),
+    isActive: boolean("is_active").default(true).notNull(),
+    status: redditMonitorStatusEnum("status").default("idle").notNull(),
+    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }),
+    totalMentionsFound: integer("total_mentions_found").default(0).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    index("idx_reddit_monitors_brand").on(t.brandId),
+    index("idx_reddit_monitors_user").on(t.userId),
+  ]
+);
+
+// ─── Reddit Mentions ──────────────────────────────────────────────────────────
+
+export const redditMentions = pgTable(
+  "reddit_mentions",
+  {
+    id: text("id").primaryKey(),
+    monitorId: text("monitor_id")
+      .notNull()
+      .references(() => redditMonitors.id, { onDelete: "cascade" }),
+    brandId: text("brand_id")
+      .notNull()
+      .references(() => brands.id, { onDelete: "cascade" }),
+    subreddit: text("subreddit").notNull(),
+    postId: text("post_id").notNull(),
+    postTitle: text("post_title").notNull(),
+    postUrl: text("post_url").notNull(),
+    commentId: text("comment_id"), // null if mention is in the post body
+    author: text("author"),
+    bodySnippet: text("body_snippet"), // first 500 chars of relevant content
+    sentiment: sentimentEnum("sentiment").default("neutral").notNull(),
+    upvotes: integer("upvotes").default(0).notNull(),
+    foundAt: timestamp("found_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    index("idx_reddit_mentions_brand").on(t.brandId),
+    index("idx_reddit_mentions_monitor").on(t.monitorId),
+    uniqueIndex("idx_reddit_mentions_post_comment").on(t.postId, t.commentId),
+  ]
+);
+
+// ─── Admin — API Keys ─────────────────────────────────────────────────────────
+
+export const apiKeys = pgTable(
+  "api_keys",
+  {
+    id: text("id").primaryKey(),
+    service: apiServiceEnum("service").notNull(),
+    label: text("label").notNull(),
+    keyEncrypted: text("key_encrypted").notNull(), // AES-256 encrypted
+    quotaMonthly: integer("quota_monthly").default(10000).notNull(),
+    usedThisMonth: integer("used_this_month").default(0).notNull(),
+    env: apiEnvEnum("env").default("production").notNull(),
+    isActive: boolean("is_active").default(true).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    createdBy: text("created_by").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [index("idx_api_keys_service").on(t.service)]
+);
+
+// ─── Admin — Activity Logs ────────────────────────────────────────────────────
+
+export const activityLogs = pgTable(
+  "activity_logs",
+  {
+    id: text("id").primaryKey(),
+    actorId: text("actor_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    actorEmail: text("actor_email"), // snapshot so log survives user deletion
+    action: text("action").notNull(), // e.g. "user.suspended", "plan.updated"
+    targetType: text("target_type"), // e.g. "user", "brand", "subscription"
+    targetId: text("target_id"),
+    targetLabel: text("target_label"), // human-readable snapshot of target
     ipAddress: text("ip_address"),
     userAgent: text("user_agent"),
-    metadata: json("metadata"),
-    createdAt: timestamp("created_at")
-      .$defaultFn(() => new Date())
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
       .notNull(),
   },
-  (table) => ({
-    orgIdx: index("audit_logs_organization_idx").on(table.organizationId),
-    userIdx: index("audit_logs_user_idx").on(table.userId),
-    actionIdx: index("audit_logs_action_idx").on(table.action),
-    resourceIdx: index("audit_logs_resource_idx").on(table.resource),
-    createdAtIdx: index("audit_logs_created_at_idx").on(table.createdAt),
-  }),
+  (t) => [
+    index("idx_activity_logs_actor").on(t.actorId),
+    index("idx_activity_logs_created").on(t.createdAt),
+    index("idx_activity_logs_action").on(t.action),
+  ]
 );
 
-// ==================== INVITATIONS ====================
+// ─── Admin — Announcements ────────────────────────────────────────────────────
 
-export const invitations = pgTable(
-  "invitations",
+export const announcements = pgTable(
+  "announcements",
   {
     id: text("id").primaryKey(),
-    organizationId: text("organization_id")
-      .notNull()
-      .references(() => organizations.id, { onDelete: "cascade" }),
-    email: text("email").notNull(),
-    role: text("role")
-      .notNull()
-      .$defaultFn(() => "member"),
-    permissions: json("permissions").$type<{
-      canManageUsers: boolean;
-      canManageProjects: boolean;
-      canManageBilling: boolean;
-      canViewAnalytics: boolean;
-      canInviteUsers: boolean;
-      [key: string]: boolean;
-    }>(),
-    invitedBy: text("invited_by")
-      .notNull()
-      .references(() => users.id),
-    token: text("token").notNull().unique(),
-    expiresAt: timestamp("expires_at").notNull(),
-    acceptedAt: timestamp("accepted_at"),
-    status: text("status").$defaultFn(() => "pending"), // pending, accepted, expired, cancelled
-    createdAt: timestamp("created_at")
-      .$defaultFn(() => new Date())
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    type: announcementTypeEnum("type").default("info").notNull(),
+    target: announcementTargetEnum("target").default("all").notNull(),
+    ctaLabel: text("cta_label"),
+    ctaUrl: text("cta_url"),
+    isActive: boolean("is_active").default(true).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    createdBy: text("created_by").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
       .notNull(),
-    updatedAt: timestamp("updated_at")
-      .$defaultFn(() => new Date())
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
       .notNull(),
   },
-  (table) => ({
-    orgIdx: index("invitations_organization_idx").on(table.organizationId),
-    emailIdx: index("invitations_email_idx").on(table.email),
-    tokenIdx: index("invitations_token_idx").on(table.token),
-    statusIdx: index("invitations_status_idx").on(table.status),
-  }),
+  (t) => [index("idx_announcements_active").on(t.isActive, t.target)]
 );
 
-// ==================== CUSTOM FIELDS ====================
+// ─── Admin — Feature Flags ────────────────────────────────────────────────────
 
-export const customFieldDefinitions = pgTable(
-  "custom_field_definitions",
+export const featureFlags = pgTable("feature_flags", {
+  id: text("id").primaryKey(),
+  key: text("key").notNull().unique(),
+  label: text("label").notNull(),
+  description: text("description"),
+  category: text("category").notNull(),
+  enabledFree: boolean("enabled_free").default(false).notNull(),
+  enabledPro: boolean("enabled_pro").default(false).notNull(),
+  enabledAgency: boolean("enabled_agency").default(true).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
+// ─── Admin — Email Templates ──────────────────────────────────────────────────
+
+export const emailTemplates = pgTable("email_templates", {
+  id: text("id").primaryKey(),
+  key: text("key").notNull().unique(), // e.g. "welcome", "plan_upgraded"
+  name: text("name").notNull(),
+  category: emailCategoryEnum("category").notNull(),
+  subject: text("subject").notNull(),
+  bodyHtml: text("body_html").notNull(),
+  variables: text("variables").array().default([]).notNull(), // e.g. ["{{name}}", "{{plan}}"]
+  isActive: boolean("is_active").default(true).notNull(),
+  openRatePct: decimal("open_rate_pct", { precision: 5, scale: 2 }),
+  totalSent: integer("total_sent").default(0).notNull(),
+  lastSentAt: timestamp("last_sent_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
+// ─── Email Logs ───────────────────────────────────────────────────────────────
+
+export const emailLogs = pgTable(
+  "email_logs",
   {
-    id: text("id")
-      .primaryKey()
-      .$defaultFn(() => crypto.randomUUID()),
-    organizationId: text("organization_id")
-      .notNull()
-      .references(() => organizations.id, { onDelete: "cascade" }),
-    entityType: text("entity_type")
-      .notNull()
-      .$defaultFn(() => "project"),
-    name: text("name").notNull(),
-    type: text("type").notNull(),
-    options: json("options").$type<{ label: string; color: string }[]>(),
-    createdAt: timestamp("created_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-    updatedAt: timestamp("updated_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-  },
-  (table) => ({
-    orgIdx: index("custom_field_definitions_org_idx").on(table.organizationId),
-    entityTypeIdx: index("custom_field_definitions_entity_type_idx").on(
-      table.entityType,
-    ),
-  }),
-);
-
-// ==================== SUPPORT TICKETS ====================
-
-export const supportTickets = pgTable(
-  "support_tickets",
-  {
-    id: text("id")
-      .primaryKey()
-      .$defaultFn(() => crypto.randomUUID()),
-    ticketNumber: text("ticket_number").notNull().unique(),
+    id: text("id").primaryKey(),
+    templateId: text("template_id").references(() => emailTemplates.id),
+    toEmail: text("to_email").notNull(),
+    toUserId: text("to_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
     subject: text("subject").notNull(),
-    description: text("description").notNull(),
-    priority: text("priority", { enum: ["High", "Medium", "Low"] }).notNull(),
-    status: text("status", { enum: ["open", "closed"] })
-      .notNull()
-      .default("open"),
-    submittedby: text("submitted_by")
-      .notNull()
-      .references(() => users.id),
-    submittedbyRole: text("submitted_by_role").notNull(),
-    submittedbyName: text("submitted_by_name").notNull(),
-    client: text("client").notNull(),
-    assignedto: text("assigned_to").notNull(),
-    createdon: timestamp("created_on").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+    status: text("status").notNull(), // sent / failed / bounced / opened
+    sendgridMessageId: text("sendgrid_message_id"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    sentAt: timestamp("sent_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (table) => ({
-    ticketNumberIdx: index("ticket_number_idx").on(table.ticketNumber),
-    statusIdx: index("status_idx").on(table.status),
-    priorityIdx: index("priority_idx").on(table.priority),
-    submittedByIdx: index("submitted_by_idx").on(table.submittedby),
-  }),
+  (t) => [
+    index("idx_email_logs_user").on(t.toUserId),
+    index("idx_email_logs_sent").on(t.sentAt),
+  ]
 );
 
-// ==================== SUPPORT TICKET MESSAGES ====================
+// ═══════════════════════════════════════════════════════════════════════════════
+// Relations
+// ═══════════════════════════════════════════════════════════════════════════════
 
-export const supportTicketMessages = pgTable(
-  "support_ticket_messages",
-  {
-    id: text("id")
-      .primaryKey()
-      .$defaultFn(() => crypto.randomUUID()),
-    ticketId: text("ticket_id")
-      .notNull()
-      .references(() => supportTickets.id, { onDelete: "cascade" }),
-    senderId: text("sender_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    senderRole: text("sender_role").notNull(),
-    senderName: text("sender_name").notNull(),
-    message: text("message").notNull(),
-    createdAt: timestamp("created_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-  },
-  (table) => ({
-    ticketIdIdx: index("support_ticket_messages_ticket_id_idx").on(table.ticketId),
-    senderIdIdx: index("support_ticket_messages_sender_id_idx").on(table.senderId),
-  }),
-);
-// ==================== PAYMENT LINKS ====================
-
-export const paymentLinks = pgTable(
-  "payment_links",
-  {
-    id: text("id")
-      .primaryKey()
-      .$defaultFn(() => crypto.randomUUID()),
-    organizationId: text("organization_id")
-      .notNull()
-      .references(() => organizations.id, { onDelete: "cascade" }),
-    clientId: text("client_id")
-      .notNull()
-      .references(() => clients.id, { onDelete: "cascade" }),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
-    createdBy: text("created_by")
-      .notNull()
-      .references(() => users.id),
-    description: text("description").notNull(),
-    project: text("project").notNull(),
-    submittedby: text("submitted_by").notNull(),
-    clientname: text("client_name").notNull(),
-    amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
-    paymentLink: text("payment_link").notNull().unique(),
-    createdAt: timestamp("created_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-    updatedAt: timestamp("updated_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-  },
-  (table) => ({
-    orgIdx: index("payment_links_organization_idx").on(table.organizationId),
-    clientIdx: index("payment_links_client_idx").on(table.clientId),
-    projectIdx: index("payment_links_project_idx").on(table.projectId),
-    createdByIdx: index("payment_links_created_by_idx").on(table.createdBy),
-    paymentLinkIdx: index("payment_links_payment_link_idx").on(
-      table.paymentLink,
-    ),
-  }),
-);
-
-// ==================== RECENT ACTIVITIES ====================
-export const recentActivities = pgTable(
-  "recent_activities",
-  {
-    id: text("id")
-      .primaryKey()
-      .$defaultFn(() => crypto.randomUUID()),
-    organizationId: text("organization_id").references(() => organizations.id),
-    userId: text("user_id").references(() => users.id),
-    actorId: text("actor_id").references(() => users.id),
-    type: text("type").notNull(),
-    action: text("action").notNull(),
-    resource: text("resource").notNull(),
-    resourceId: text("resource_id"),
-    message: text("message"),
-    metadata: json("metadata"),
-    createdAt: timestamp("created_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-  },
-  (table) => ({
-    orgIdx: index("recent_activities_org_idx").on(table.organizationId),
-    actorIdx: index("recent_activities_actor_idx").on(table.actorId),
-    typeIdx: index("recent_activities_type_idx").on(table.type),
-    resIdx: index("recent_activities_res_idx").on(table.resource),
-  }),
-);
-
-// ==================== RELATIONS ====================
-
-export const usersRelations = relations(users, ({ many }) => ({
-  userOrganizations: many(userOrganizations, {
-    relationName: "userOrganizations_userId",
-  }),
-  createdProjects: many(projects, { relationName: "projectCreator" }),
-  assignedTasks: many(tasks, { relationName: "taskAssignee" }),
-  createdTasks: many(tasks, { relationName: "taskCreator" }),
-  sessions: many(session),
-  accounts: many(account),
-  timeEntries: many(timeEntries),
-  notifications: many(notifications),
-  auditLogs: many(auditLogs),
-  createdClients: many(clients, { relationName: "clientCreator" }),
-  sentInvitations: many(invitations, { relationName: "invitationSender" }),
-  createdSubAdmins: many(subadmin, { relationName: "subadminCreator" }),
-  supportTickets: many(supportTickets, { relationName: "ticketSubmitter" }),
-  invitedUserOrganizations: many(userOrganizations, {
-    relationName: "userOrganizations_invitedBy",
-  }),
-  createdUserMembers: many(userManagement, {
-    relationName: "userManagementCreator",
-  }),
-  projectComments: many(projectComments),
-  calendarEvents: many(calendarEvents),
-  createdPaymentLinks: many(paymentLinks),
-  createdInvoices: many(invoices),
-  createdRecurringInvoices: many(recurringInvoices),
-  supportTicketMessages: many(supportTicketMessages),
+export const userProfilesRelations = relations(userProfiles, ({ one }) => ({
+  user: one(users, { fields: [userProfiles.userId], references: [users.id] }),
 }));
 
-export const organizationsRelations = relations(
-  organizations,
+export const subscriptionsRelations = relations(
+  subscriptions,
   ({ one, many }) => ({
-    subscriptionPlan: one(subscriptionPlans, {
-      fields: [organizations.subscriptionPlanId],
-      references: [subscriptionPlans.id],
+    user: one(users, {
+      fields: [subscriptions.userId],
+      references: [users.id],
     }),
-    userOrganizations: many(userOrganizations),
-    projects: many(projects),
-    subscriptions: many(subscriptions),
+    plan: one(plans, {
+      fields: [subscriptions.planId],
+      references: [plans.id],
+    }),
     invoices: many(invoices),
-    clients: many(clients),
-    invitations: many(invitations),
-    auditLogs: many(auditLogs),
-    userManagement: many(userManagement),
-    calendarEvents: many(calendarEvents),
-    recurringInvoices: many(recurringInvoices),
-  }),
-);
-
-export const subscriptionPlansRelations = relations(
-  subscriptionPlans,
-  ({ many }) => ({
-    organizations: many(organizations),
-    subscriptions: many(subscriptions),
-  }),
+  })
 );
 
 export const invoicesRelations = relations(invoices, ({ one }) => ({
-  organization: one(organizations, {
-    fields: [invoices.organizationId],
-    references: [organizations.id],
-  }),
-  client: one(clients, {
-    fields: [invoices.clientId],
-    references: [clients.id],
-  }),
-  creator: one(users, {
-    fields: [invoices.createdBy],
-    references: [users.id],
+  user: one(users, { fields: [invoices.userId], references: [users.id] }),
+  subscription: one(subscriptions, {
+    fields: [invoices.subscriptionId],
+    references: [subscriptions.id],
   }),
 }));
 
-export const projectsRelations = relations(projects, ({ one, many }) => ({
-  organization: one(organizations, {
-    fields: [projects.organizationId],
-    references: [organizations.id],
-  }),
-  creator: one(users, {
-    fields: [projects.createdBy],
-    references: [users.id],
-    relationName: "projectCreator",
-  }),
-  tasks: many(tasks),
-  timeEntries: many(timeEntries),
-  comments: many(projectComments),
-  expenses: many(projectExpenses),
+export const brandsRelations = relations(brands, ({ one, many }) => ({
+  user: one(users, { fields: [brands.userId], references: [users.id] }),
+  queries: many(brandQueries),
+  dailyScores: many(brandDailyScores),
+  redditMonitors: many(redditMonitors),
+  aiRuns: many(aiQueryRuns),
 }));
 
-export const tasksRelations = relations(tasks, ({ one, many }) => ({
-  project: one(projects, {
-    fields: [tasks.projectId],
-    references: [projects.id],
-  }),
-  assignee: one(users, {
-    fields: [tasks.assignedTo],
-    references: [users.id],
-    relationName: "taskAssignee",
-  }),
-  creator: one(users, {
-    fields: [tasks.createdBy],
-    references: [users.id],
-    relationName: "taskCreator",
-  }),
-  parentTask: one(tasks, {
-    fields: [tasks.parentId],
-    references: [tasks.id],
-    relationName: "subtasks",
-  }),
-  subtasks: many(tasks, {
-    relationName: "subtasks",
-  }),
-  timeEntries: many(timeEntries),
-}));
-
-export const subscriptionsRelations = relations(subscriptions, ({ one }) => ({
-  organization: one(organizations, {
-    fields: [subscriptions.organizationId],
-    references: [organizations.id],
-  }),
-  plan: one(subscriptionPlans, {
-    fields: [subscriptions.planId],
-    references: [subscriptionPlans.id],
-  }),
-}));
-
-export const clientsRelations = relations(clients, ({ one, many }) => ({
-  organization: one(organizations, {
-    fields: [clients.organizationId],
-    references: [organizations.id],
-  }),
-  creator: one(users, {
-    fields: [clients.createdBy],
-    references: [users.id],
-    relationName: "clientCreator",
-  }),
-  timeEntries: many(timeEntries),
-  recurringInvoices: many(recurringInvoices),
-}));
-
-export const recurringInvoicesRelations = relations(
-  recurringInvoices,
-  ({ one }) => ({
-    organization: one(organizations, {
-      fields: [recurringInvoices.organizationId],
-      references: [organizations.id],
-    }),
-    client: one(clients, {
-      fields: [recurringInvoices.clientId],
-      references: [clients.id],
-    }),
-    creator: one(users, {
-      fields: [recurringInvoices.createdBy],
-      references: [users.id],
-    }),
-  }),
-);
-
-export const timeEntriesRelations = relations(timeEntries, ({ one }) => ({
-  user: one(users, {
-    fields: [timeEntries.userId],
-    references: [users.id],
-  }),
-  project: one(projects, {
-    fields: [timeEntries.projectId],
-    references: [projects.id],
-  }),
-  task: one(tasks, {
-    fields: [timeEntries.taskId],
-    references: [tasks.id],
-  }),
-  client: one(clients, {
-    fields: [timeEntries.clientId],
-    references: [clients.id],
-  }),
-}));
-
-export const notificationsRelations = relations(notifications, ({ one }) => ({
-  user: one(users, {
-    fields: [notifications.userId],
-    references: [users.id],
-  }),
-  organization: one(organizations, {
-    fields: [notifications.organizationId],
-    references: [organizations.id],
-  }),
-}));
-
-export const auditLogsRelations = relations(auditLogs, ({ one }) => ({
-  user: one(users, {
-    fields: [auditLogs.userId],
-    references: [users.id],
-  }),
-  organization: one(organizations, {
-    fields: [auditLogs.organizationId],
-    references: [organizations.id],
-  }),
-}));
-
-export const invitationsRelations = relations(invitations, ({ one }) => ({
-  organization: one(organizations, {
-    fields: [invitations.organizationId],
-    references: [organizations.id],
-  }),
-  invitedBy: one(users, {
-    fields: [invitations.invitedBy],
-    references: [users.id],
-    relationName: "invitationSender",
-  }),
-}));
-
-export const supportTicketsRelations = relations(
-  supportTickets,
+export const brandQueriesRelations = relations(
+  brandQueries,
   ({ one, many }) => ({
-    submittedBy: one(users, {
-      fields: [supportTickets.submittedby],
-      references: [users.id],
-      relationName: "ticketSubmitter",
+    brand: one(brands, {
+      fields: [brandQueries.brandId],
+      references: [brands.id],
     }),
-    messages: many(supportTicketMessages),
-  }),
+    runs: many(aiQueryRuns),
+  })
 );
 
-export const supportTicketMessagesRelations = relations(
-  supportTicketMessages,
+export const aiQueryRunsRelations = relations(aiQueryRuns, ({ one }) => ({
+  query: one(brandQueries, {
+    fields: [aiQueryRuns.queryId],
+    references: [brandQueries.id],
+  }),
+  brand: one(brands, {
+    fields: [aiQueryRuns.brandId],
+    references: [brands.id],
+  }),
+  user: one(users, { fields: [aiQueryRuns.userId], references: [users.id] }),
+}));
+
+export const brandDailyScoresRelations = relations(
+  brandDailyScores,
   ({ one }) => ({
-    ticket: one(supportTickets, {
-      fields: [supportTicketMessages.ticketId],
-      references: [supportTickets.id],
+    brand: one(brands, {
+      fields: [brandDailyScores.brandId],
+      references: [brands.id],
     }),
-    sender: one(users, {
-      fields: [supportTicketMessages.senderId],
-      references: [users.id],
-    }),
-  }),
+  })
 );
 
-export const userOrganizationsRelations = relations(
-  userOrganizations,
-  ({ one }) => ({
-    user: one(users, {
-      fields: [userOrganizations.userId],
-      references: [users.id],
-      relationName: "userOrganizations_userId",
-    }),
-    organization: one(organizations, {
-      fields: [userOrganizations.organizationId],
-      references: [organizations.id],
-    }),
-    invitedBy: one(users, {
-      fields: [userOrganizations.invitedBy],
-      references: [users.id],
-      relationName: "invitationSender",
-    }),
-  }),
-);
-
-export const subadminRelations = relations(subadmin, ({ one }) => ({
-  createdBy: one(users, {
-    fields: [subadmin.createdBy],
-    references: [users.id],
-    relationName: "subadminCreator",
-  }),
-}));
-
-// ==================== CALENDAR EVENTS ====================
-
-export const calendarEvents = pgTable(
-  "calendar_events",
-  {
-    id: text("id").primaryKey(),
-    title: text("title").notNull(),
-    description: text("description"),
-    date: timestamp("date").notNull(),
-    startHour: integer("start_hour").notNull(),
-    endHour: integer("end_hour").notNull(),
-    calendarType: text("calendar_type", {
-      enum: ["work", "education", "personal", "meeting"],
-    }).notNull(),
-    platform: text("platform", {
-      enum: ["google_meet", "whatsapp", "outlook", "none", "meeting"],
-    }).$defaultFn(() => "none"),
-    meetLink: text("meet_link"),
-    whatsappNumber: text("whatsapp_number"),
-    outlookEvent: text("outlook_event"),
-    organizationId: text("organization_id").notNull(),
-    userId: text("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    // Google Calendar integration fields
-    googleEventId: text("google_event_id"), // Google Calendar event ID
-    googleCalendarId: text("google_calendar_id"), // Google Calendar ID (usually 'primary')
-    syncStatus: text("sync_status", {
-      enum: ["synced", "pending", "failed", "not_synced"],
-    }).$defaultFn(() => "not_synced"),
-    lastSyncAt: timestamp("last_sync_at"),
-    syncDirection: text("sync_direction", {
-      enum: ["app_to_google", "google_to_app", "bidirectional"],
-    }).$defaultFn(() => "bidirectional"),
-    googleEventData: json("google_event_data").$type<{
-      htmlLink?: string;
-      hangoutLink?: string;
-      conferenceData?: any;
-      attendees?: any[];
-      location?: string;
-      recurrence?: string[];
-      [key: string]: any;
-    }>(),
-    createdAt: timestamp("created_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-    updatedAt: timestamp("updated_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-  },
-  (table) => ({
-    organizationIdx: index("calendar_events_organization_idx").on(
-      table.organizationId,
-    ),
-    userIdx: index("calendar_events_user_idx").on(table.userId),
-    dateIdx: index("calendar_events_date_idx").on(table.date),
-    calendarTypeIdx: index("calendar_events_calendar_type_idx").on(
-      table.calendarType,
-    ),
-  }),
-);
-
-export const sessionRelations = relations(session, ({ one }) => ({
-  user: one(users, {
-    fields: [session.userId],
-    references: [users.id],
-  }),
-}));
-
-export const accountRelations = relations(account, ({ one }) => ({
-  user: one(users, {
-    fields: [account.userId],
-    references: [users.id],
-  }),
-}));
-
-export const paymentLinksRelations = relations(paymentLinks, ({ one }) => ({
-  organization: one(organizations, {
-    fields: [paymentLinks.organizationId],
-    references: [organizations.id],
-  }),
-  client: one(clients, {
-    fields: [paymentLinks.clientId],
-    references: [clients.id],
-  }),
-  project: one(projects, {
-    fields: [paymentLinks.projectId],
-    references: [projects.id],
-  }),
-  creator: one(users, {
-    fields: [paymentLinks.createdBy],
-    references: [users.id],
-  }),
-}));
-
-export const userManagementRelations = relations(userManagement, ({ one }) => ({
-  organization: one(organizations, {
-    fields: [userManagement.organizationId],
-    references: [organizations.id],
-  }),
-  createdBy: one(users, {
-    fields: [userManagement.createdBy],
-    references: [users.id],
-    relationName: "userManagementCreator",
-  }),
-}));
-
-export const projectCommentsRelations = relations(
-  projectComments,
+export const redditMonitorsRelations = relations(
+  redditMonitors,
   ({ one, many }) => ({
-    project: one(projects, {
-      fields: [projectComments.projectId],
-      references: [projects.id],
+    brand: one(brands, {
+      fields: [redditMonitors.brandId],
+      references: [brands.id],
     }),
     user: one(users, {
-      fields: [projectComments.userId],
+      fields: [redditMonitors.userId],
       references: [users.id],
     }),
-    parent: one(projectComments, {
-      fields: [projectComments.parentId],
-      references: [projectComments.id],
-      relationName: "commentReplies",
-    }),
-    replies: many(projectComments, {
-      relationName: "commentReplies",
-    }),
-  }),
+    mentions: many(redditMentions),
+  })
 );
 
-export const projectExpensesRelations = relations(
-  projectExpenses,
-  ({ one }) => ({
-    project: one(projects, {
-      fields: [projectExpenses.projectId],
-      references: [projects.id],
-    }),
-    creator: one(users, {
-      fields: [projectExpenses.createdBy],
-      references: [users.id],
-    }),
+export const redditMentionsRelations = relations(redditMentions, ({ one }) => ({
+  monitor: one(redditMonitors, {
+    fields: [redditMentions.monitorId],
+    references: [redditMonitors.id],
   }),
-);
-
-// ==================== NEWSLETTER SUBSCRIBERS ====================
-
-export const newsletterSubscribers = pgTable(
-  "newsletter_subscribers",
-  {
-    id: text("id").primaryKey(),
-    email: text("email").notNull().unique(),
-    subscribed: boolean("subscribed")
-      .$defaultFn(() => true)
-      .notNull(),
-    subscribedAt: timestamp("subscribed_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-    unsubscribedAt: timestamp("unsubscribed_at"),
-    createdAt: timestamp("created_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-    updatedAt: timestamp("updated_at")
-      .$defaultFn(() => new Date())
-      .notNull(),
-  },
-  (table) => ({
-    emailIdx: index("newsletter_subscribers_email_idx").on(table.email),
-    subscribedIdx: index("newsletter_subscribers_subscribed_idx").on(
-      table.subscribed,
-    ),
-  }),
-);
-
-export const calendarEventsRelations = relations(calendarEvents, ({ one }) => ({
-  organization: one(organizations, {
-    fields: [calendarEvents.organizationId],
-    references: [organizations.id],
-  }),
-  user: one(users, {
-    fields: [calendarEvents.userId],
-    references: [users.id],
+  brand: one(brands, {
+    fields: [redditMentions.brandId],
+    references: [brands.id],
   }),
 }));
 
-export const recentActivitiesRelations = relations(
-  recentActivities,
-  ({ one }) => ({
-    organization: one(organizations, {
-      fields: [recentActivities.organizationId],
-      references: [organizations.id],
-    }),
-    actor: one(users, {
-      fields: [recentActivities.actorId],
-      references: [users.id],
-    }),
-    user: one(users, {
-      fields: [recentActivities.userId],
-      references: [users.id],
-    }),
-  }),
+export const emailTemplatesRelations = relations(
+  emailTemplates,
+  ({ many }) => ({
+    logs: many(emailLogs),
+  })
 );
 
-export const filesRelations = relations(files, ({ one, many }) => ({
-  organization: one(organizations, {
-    fields: [files.organizationId],
-    references: [organizations.id],
-  }),
-  project: one(projects, {
-    fields: [files.projectId],
-    references: [projects.id],
-  }),
-  task: one(tasks, {
-    fields: [files.taskId],
-    references: [tasks.id],
-  }),
-  client: one(clients, {
-    fields: [files.clientId],
-    references: [clients.id],
-  }),
-  uploader: one(users, {
-    fields: [files.uploadedBy],
-    references: [users.id],
-  }),
-  versions: many(fileVersions),
-}));
-
-export const fileVersionsRelations = relations(fileVersions, ({ one }) => ({
-  file: one(files, {
-    fields: [fileVersions.fileId],
-    references: [files.id],
-  }),
-  uploader: one(users, {
-    fields: [fileVersions.uploadedBy],
-    references: [users.id],
+export const emailLogsRelations = relations(emailLogs, ({ one }) => ({
+  template: one(emailTemplates, {
+    fields: [emailLogs.templateId],
+    references: [emailTemplates.id],
   }),
 }));

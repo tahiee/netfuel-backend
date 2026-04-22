@@ -8,8 +8,15 @@ const schemaObject = z.object({
   PORT: z.string().optional(),
   SKIP_DATABASE: z.string().optional(),
   FRONTEND_DOMAIN: z.string().default("http://localhost:3000"),
+  BACKEND_DOMAIN: z.string().default("http://localhost:4000"),
   CONNECTION_URL: z.string().optional(),
   DATABASE_NAME: z.string().optional(),
+  COOKIE_SECRET: z
+    .string()
+    .min(32)
+    .default("change-me-in-production-use-at-least-32-random-chars"),
+  SENDGRID_API_KEY: z.string().optional(),
+  SENDGRID_SENDER: z.string().email().default("noreply@netfuel.ai"),
 });
 
 const envSchema = schemaObject.safeParse(process.env);
