@@ -3,72 +3,219 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="stylesheet" href="output.css" />
-    <link rel="icon" href="logo.svg" />
-    <title>Document</title>
+    <meta
+      name="description"
+      content="Netfuel backend API — AI-powered brand monitoring."
+    />
+    <link rel="stylesheet" href="/output.css" />
+    <link rel="icon" href="/logo.svg" type="image/svg+xml" />
+    <title>Netfuel API · Backend</title>
     <style>
-      .loader {
-        width: 64px;
-        height: 64px;
-        color: white;
-        position: relative;
-        background: radial-gradient(11.2px, currentColor 94%, #0000);
-      }
-
-      .loader:before {
-        content: "";
-        position: absolute;
-        inset: 0;
-        border-radius: 50%;
-        background: radial-gradient(
-              10.08px at bottom right,
-              #0000 94%,
-              currentColor
-            )
-            top left,
-          radial-gradient(10.08px at bottom left, #0000 94%, currentColor) top
-            right,
-          radial-gradient(10.08px at top right, #0000 94%, currentColor) bottom
-            left,
-          radial-gradient(10.08px at top left, #0000 94%, currentColor) bottom
-            right;
-        background-size: 22.4px 22.4px;
-        background-repeat: no-repeat;
-        animation: loader 1.5s infinite cubic-bezier(0.3, 1, 0, 1);
-      }
-
-      @keyframes loader {
-        33% {
-          inset: -11.2px;
-          transform: rotate(0deg);
-        }
-
-        66% {
-          inset: -11.2px;
-          transform: rotate(90deg);
-        }
-
+      @keyframes blob {
+        0%,
         100% {
-          inset: 0;
-          transform: rotate(90deg);
+          transform: translate(0, 0) scale(1);
         }
+        33% {
+          transform: translate(30px, -40px) scale(1.05);
+        }
+        66% {
+          transform: translate(-20px, 25px) scale(0.95);
+        }
+      }
+      .blob {
+        animation: blob 18s ease-in-out infinite;
+      }
+      .grid-bg {
+        background-image:
+          linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+        background-size: 48px 48px;
+        mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
       }
     </style>
   </head>
-  <body class="bg-black text-white h-screen flex">
-    <div class="flex items-center gap-5 m-auto">
-      <div class="loader"></div>
-      <div class="flex flex-col gap-1.5">
-        <h1 class="text-4xl font-bold">Flowlio API</h1>
-        <p>
-          Powered by
-          <a
-            href="https://dotclickllc.com/"
-            class="text-blue-500 border border-blue-500 rounded-full px-2 py-1"
-            >DotClick LLC</a
-          >
-        </p>
-      </div>
+  <body
+    class="relative min-h-dvh overflow-hidden bg-zinc-950 font-sans text-zinc-100 antialiased"
+  >
+    <!-- Ambient background -->
+    <div aria-hidden="true" class="pointer-events-none absolute inset-0">
+      <div class="absolute inset-0 grid-bg"></div>
+      <div
+        class="blob absolute -left-24 top-1/4 size-112 rounded-full bg-indigo-600/20 blur-[120px]"
+      ></div>
+      <div
+        class="blob absolute -right-24 bottom-1/4 size-112 rounded-full bg-teal-500/20 blur-[120px]"
+        style="animation-delay: -6s"
+      ></div>
     </div>
+
+    <!-- Content -->
+    <main class="relative z-10 flex min-h-dvh items-center justify-center p-6">
+      <div class="w-full max-w-xl">
+        <!-- Brand -->
+        <div class="mb-8 flex items-center gap-3">
+          <div
+            class="grid size-11 place-items-center rounded-2xl bg-linear-to-br from-teal-400 via-indigo-500 to-indigo-700 text-base font-bold text-white shadow-lg shadow-indigo-500/20 ring-1 ring-white/10"
+          >
+            N
+          </div>
+          <div>
+            <h1 class="text-lg font-semibold tracking-tight">Netfuel API</h1>
+            <p class="text-xs text-zinc-500">v1.0.0 · node.js + express</p>
+          </div>
+        </div>
+
+        <!-- Status card -->
+        <section
+          class="rounded-3xl border border-white/8 bg-white/3 p-7 shadow-2xl shadow-black/40 backdrop-blur-xl"
+        >
+          <div class="mb-5 flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+              <span class="relative flex size-2.5">
+                <span
+                  class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60"
+                ></span>
+                <span
+                  class="relative inline-flex size-2.5 rounded-full bg-emerald-500"
+                ></span>
+              </span>
+              <span class="text-sm font-medium text-emerald-400"
+                >Service Healthy</span
+              >
+            </div>
+            <span id="timestamp" class="font-mono text-[11px] text-zinc-600"
+              >—</span
+            >
+          </div>
+
+          <h2 class="mb-2 text-2xl font-semibold tracking-tight">
+            Backend is running
+          </h2>
+          <p class="text-sm leading-relaxed text-zinc-400">
+            Netfuel API server is online and ready to handle requests. Use the
+            endpoints below to interact with the platform.
+          </p>
+
+          <!-- Stats -->
+          <div class="mt-6 grid grid-cols-3 gap-3">
+            <div
+              class="rounded-xl border border-white/6 bg-zinc-950/40 p-3.5"
+            >
+              <div
+                class="mb-1 text-[10px] font-medium uppercase tracking-wider text-zinc-500"
+              >
+                Uptime
+              </div>
+              <div
+                id="uptime"
+                class="font-mono text-sm font-semibold text-zinc-200"
+              >
+                —
+              </div>
+            </div>
+            <div
+              class="rounded-xl border border-white/6 bg-zinc-950/40 p-3.5"
+            >
+              <div
+                class="mb-1 text-[10px] font-medium uppercase tracking-wider text-zinc-500"
+              >
+                Database
+              </div>
+              <div id="db" class="text-sm font-semibold text-zinc-200">—</div>
+            </div>
+            <div
+              class="rounded-xl border border-white/6 bg-zinc-950/40 p-3.5"
+            >
+              <div
+                class="mb-1 text-[10px] font-medium uppercase tracking-wider text-zinc-500"
+              >
+                Memory
+              </div>
+              <div
+                id="mem"
+                class="font-mono text-sm font-semibold text-zinc-200"
+              >
+                —
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Endpoints -->
+        <section
+          class="mt-5 rounded-3xl border border-white/8 bg-white/2 p-6 backdrop-blur-xl"
+        >
+          <h3
+            class="mb-4 text-[11px] font-semibold uppercase tracking-wider text-zinc-500"
+          >
+            Quick Links
+          </h3>
+          <nav class="grid gap-1.5">
+            <a
+              href="/api/health"
+              class="group flex items-center justify-between rounded-xl px-3.5 py-2.5 transition-colors hover:bg-white/4"
+            >
+              <span class="flex items-center gap-3">
+                <span
+                  class="rounded-md bg-emerald-500/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-emerald-400 ring-1 ring-emerald-500/20"
+                  >GET</span
+                >
+                <span class="font-mono text-sm text-zinc-300">/api/health</span>
+              </span>
+              <span
+                class="text-xs text-zinc-600 transition-colors group-hover:text-teal-400"
+                >Health check →</span
+              >
+            </a>
+            <a
+              href="/api/auth/get-session"
+              class="group flex items-center justify-between rounded-xl px-3.5 py-2.5 transition-colors hover:bg-white/4"
+            >
+              <span class="flex items-center gap-3">
+                <span
+                  class="rounded-md bg-indigo-500/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-indigo-400 ring-1 ring-indigo-500/20"
+                  >AUTH</span
+                >
+                <span class="font-mono text-sm text-zinc-300">/api/auth/*</span>
+              </span>
+              <span
+                class="text-xs text-zinc-600 transition-colors group-hover:text-teal-400"
+                >Better Auth →</span
+              >
+            </a>
+            <a
+              href="/api/users"
+              class="group flex items-center justify-between rounded-xl px-3.5 py-2.5 transition-colors hover:bg-white/4"
+            >
+              <span class="flex items-center gap-3">
+                <span
+                  class="rounded-md bg-teal-500/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-teal-400 ring-1 ring-teal-500/20"
+                  >CRUD</span
+                >
+                <span class="font-mono text-sm text-zinc-300">/api/users</span>
+              </span>
+              <span
+                class="text-xs text-zinc-600 transition-colors group-hover:text-teal-400"
+                >User management →</span
+              >
+            </a>
+          </nav>
+        </section>
+
+        <!-- Footer -->
+        <footer
+          class="mt-8 flex items-center justify-between text-[11px] text-zinc-600"
+        >
+          <span>Netfuel · AI-Powered Brand Monitoring</span>
+          <span class="flex items-center gap-1.5">
+            <span class="size-1.5 rounded-full bg-emerald-500/80"></span>
+            <span id="env-label">Development</span>
+          </span>
+        </footer>
+      </div>
+    </main>
+
+    <script src="/status.js" defer></script>
   </body>
 </html>

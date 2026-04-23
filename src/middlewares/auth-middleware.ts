@@ -1,5 +1,8 @@
 import { Request, Response, NextFunction } from "express";
+import { eq } from "drizzle-orm";
 import { getSession } from "@/utils/getsession.util";
+import { database } from "@/configs/connection.config";
+import { users } from "@/schema/auth-schema";
 import { logger } from "@/utils/logger.util";
 
 declare global {
@@ -31,6 +34,15 @@ declare global {
   }
 }
 
+/**
+ * Verifies a session cookie + hydrates `req.user` with fresh admin flags.
+ *
+ * IMPORTANT: better-auth's `session.user` payload doesn't reliably surface
+ * custom `additionalFields` (userRoles, isSuperAdmin, planSlug, brandCount).
+ * The session only carries what the admin plugin natively knows about. So we
+ * do a single indexed lookup on `users.id` to ensure admin checks use the
+ * authoritative DB values instead of whatever the cached session thinks.
+ */
 export const isAuthenticated = async (
   req: Request,
   res: Response,
@@ -49,8 +61,39 @@ export const isAuthenticated = async (
 
     const u = session.user as any;
 
-    // Reject banned users on every request (session may predate the ban)
-    if (u.banned) {
+    const [dbUser] = await database
+      .select({
+        userRoles: users.userRoles,
+        isSuperAdmin: users.isSuperAdmin,
+        planSlug: users.planSlug,
+        brandCount: users.brandCount,
+        phone: users.phone,
+        company: users.company,
+        jobTitle: users.jobTitle,
+        timezone: users.timezone,
+        locale: users.locale,
+        banned: users.banned,
+        banReason: users.banReason,
+        role: users.role,
+        emailVerified: users.emailVerified,
+        image: users.image,
+        createdAt: users.createdAt,
+        updatedAt: users.updatedAt,
+      })
+      .from(users)
+      .where(eq(users.id, u.id))
+      .limit(1);
+
+    if (!dbUser) {
+      // Session points at a user that no longer exists (deleted mid-session)
+      res.status(401).json({
+        error: "Unauthorized",
+        message: "Session user no longer exists",
+      });
+      return;
+    }
+
+    if (dbUser.banned) {
       logger.warn(`Banned user attempted access: ${u.id}`);
       res.status(403).json({
         error: "Forbidden",
@@ -66,26 +109,28 @@ export const isAuthenticated = async (
       id: u.id,
       name: u.name,
       email: u.email,
-      emailVerified: u.emailVerified ?? false,
-      image: u.image ?? null,
-      role: u.role ?? "user",
-      userRoles: u.userRoles ?? "user",
-      isSuperAdmin: u.isSuperAdmin ?? false,
-      planSlug: u.planSlug ?? "free",
-      brandCount: u.brandCount ?? 0,
-      phone: u.phone ?? null,
-      company: u.company ?? null,
-      jobTitle: u.jobTitle ?? null,
-      timezone: u.timezone ?? "UTC",
-      locale: u.locale ?? "en",
-      banned: u.banned ?? false,
-      banReason: u.banReason ?? null,
-      createdAt: u.createdAt,
-      updatedAt: u.updatedAt,
+      emailVerified: dbUser.emailVerified ?? false,
+      image: dbUser.image ?? null,
+      role: dbUser.role ?? "user",
+      userRoles: dbUser.userRoles ?? "user",
+      isSuperAdmin: dbUser.isSuperAdmin ?? false,
+      planSlug: dbUser.planSlug ?? "free",
+      brandCount: dbUser.brandCount ?? 0,
+      phone: dbUser.phone ?? null,
+      company: dbUser.company ?? null,
+      jobTitle: dbUser.jobTitle ?? null,
+      timezone: dbUser.timezone ?? "UTC",
+      locale: dbUser.locale ?? "en",
+      banned: dbUser.banned ?? false,
+      banReason: dbUser.banReason ?? null,
+      createdAt: dbUser.createdAt,
+      updatedAt: dbUser.updatedAt,
     };
 
     if (process.env.NODE_ENV !== "production") {
-      logger.debug(`Authenticated: ${req.user.id} (${req.user.userRoles})`);
+      logger.debug(
+        `Authenticated: ${req.user.id} (role=${req.user.role}, userRoles=${req.user.userRoles}, isSuperAdmin=${req.user.isSuperAdmin})`
+      );
     }
 
     return next();
@@ -98,16 +143,32 @@ export const isAuthenticated = async (
   }
 };
 
+/**
+ * Normalizes a role value for admin comparisons — case-insensitive and
+ * tolerant of "super admin" vs "superadmin" variants.
+ */
+const matchesAdminRole = (value: unknown): boolean => {
+  const v = String(value ?? "").trim().toLowerCase();
+  return v === "admin" || v === "superadmin" || v === "super admin";
+};
+
 // Guard: admin or super admin
 export const isAdmin = (req: Request, res: Response, next: NextFunction) => {
   if (!req.user) {
     res.status(401).json({ error: "Unauthorized", message: "No valid session found" });
     return;
   }
-  if (!req.user.isSuperAdmin && req.user.userRoles !== "admin") {
+
+  const allowed =
+    req.user.isSuperAdmin === true ||
+    matchesAdminRole(req.user.role) ||
+    matchesAdminRole(req.user.userRoles);
+
+  if (!allowed) {
     res.status(403).json({ error: "Forbidden", message: "Admin access required" });
     return;
   }
+
   next();
 };
 

@@ -9,7 +9,7 @@ import { env } from "@/utils/env.util";
 import { logger } from "@/utils/logger.util";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { createAuthMiddleware } from "better-auth/api";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import {
   admin as adminPlugin,
   emailOTP,
@@ -31,19 +31,6 @@ type UserAuthSnapshot = {
   isSuperAdmin: boolean | null;
   banned: boolean | null;
   twoFactorEnabled: boolean | null;
-};
-
-type AuthError = Error & { code: string; statusCode: number };
-
-const createAuthError = (
-  message: string,
-  code: string,
-  statusCode: number
-): AuthError => {
-  const error = new Error(message) as AuthError;
-  error.code = code;
-  error.statusCode = statusCode;
-  return error;
 };
 
 const normalizeUrl = (value: string) => value.replace(/\/+$/, "");
@@ -228,11 +215,13 @@ export const auth = betterAuth({
         const user = await getUserAuthSnapshotByEmail(email);
 
         if (user?.banned) {
-          throw createAuthError(
-            "Your account has been suspended. Please contact support.",
-            "ACCOUNT_BANNED",
-            403
-          );
+          // APIError makes better-auth serialize this as a structured JSON
+          // response with the correct status — raw `Error` becomes a 500.
+          throw new APIError("FORBIDDEN", {
+            message:
+              "Your account has been suspended. Please contact support.",
+            code: "ACCOUNT_BANNED",
+          });
         }
 
         // Keep login smooth for first-time superadmin flow.
