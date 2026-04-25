@@ -1,0 +1,33 @@
+name: DB Baseline (manual)
+
+# Manually triggered from GitHub Actions UI.
+# Use ONCE on a fresh deploy where the DB schema already exists (from `dbpush`)
+# but `drizzle.__drizzle_migrations` tracking table is empty.
+#
+# How to run:
+#   GitHub repo → Actions → "DB Baseline (manual)" → Run workflow → main
+#
+# After this succeeds once, normal deploys will work. You can keep this file
+# around — it's idempotent (safe to re-run, just logs "already tracked").
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - name: SSH baseline
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+            cd ${{ secrets.DEPLOY_PATH }}
+            npm run dbbaseline
