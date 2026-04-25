@@ -46,6 +46,8 @@ jobs:
             git reset --hard origin/main
             npm install
             npm run build
+            # Self-heal migration tracking on first prod deploy (no-op afterwards)
+            npm run dbbaseline
             # Apply any new committed migrations (idempotent — skips applied ones)
             npm run dbmigrate
             pm2 restart netfuel-backend

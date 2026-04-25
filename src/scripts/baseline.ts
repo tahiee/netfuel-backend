@@ -1,20 +1,15 @@
 /**
- * One-time baseline script for an existing production DB.
+ * Self-healing migration baseline.
  *
- * The DB already has the schema (e.g., from an earlier `npm run dbpush`),
- * but `drizzle.__drizzle_migrations` is empty — so `npm run dbmigrate` thinks
- * no migrations have been applied and tries to re-run them, hitting
- * "type already exists" errors.
+ * Only does something when the DB is in this specific broken state:
+ *   - `users` table EXISTS (schema was created earlier — typically via dbpush)
+ *   - `drizzle.__drizzle_migrations` is EMPTY (tracking was never populated)
  *
- * This script reads `./drizzle/meta/_journal.json` and inserts a tracking row
- * for every migration listed there, marking them as already applied without
- * actually executing any SQL. Run ONCE on the droplet:
+ * In any other state — fresh DB OR already-tracked DB — this is a no-op,
+ * so it's safe to run on every deploy before `dbmigrate`.
  *
- *   npm run dbbaseline
- *
- * After that, normal `npm run dbmigrate` will only run NEW migrations going
- * forward. Safe to run multiple times — checks for existing rows before
- * inserting.
+ * This avoids the "type already exists" loop without forcing manual SSH/UI
+ * steps after the first prod push.
  */
 
 import "dotenv/config";
@@ -41,7 +36,52 @@ interface Journal {
 
 const MIGRATIONS_FOLDER = "./drizzle";
 
+async function trackingTableHasRows(): Promise<boolean> {
+  // Drizzle's tracking table may not exist yet on a brand-new DB
+  await database.execute(sql`CREATE SCHEMA IF NOT EXISTS "drizzle"`);
+  await database.execute(sql`
+    CREATE TABLE IF NOT EXISTS "drizzle"."__drizzle_migrations" (
+      id SERIAL PRIMARY KEY,
+      hash text NOT NULL,
+      created_at bigint
+    )
+  `);
+  const result = await database.execute<{ count: string }>(
+    sql`SELECT COUNT(*)::text AS count FROM "drizzle"."__drizzle_migrations"`
+  );
+  return Number(result.rows[0]?.count ?? 0) > 0;
+}
+
+async function appSchemaExists(): Promise<boolean> {
+  // `users` is the canonical app table — if it exists, the schema was applied.
+  const result = await database.execute<{ exists: boolean }>(sql`
+    SELECT EXISTS (
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'users'
+    ) AS exists
+  `);
+  return Boolean(result.rows[0]?.exists);
+}
+
 async function run() {
+  const tracked = await trackingTableHasRows();
+  if (tracked) {
+    logger.info("Tracking table already populated — baseline skipped.");
+    return;
+  }
+
+  const schemaExists = await appSchemaExists();
+  if (!schemaExists) {
+    logger.info(
+      "Fresh DB (no `users` table) — letting `dbmigrate` apply migrations normally."
+    );
+    return;
+  }
+
+  logger.warn(
+    "Schema exists but tracking is empty — running baseline to mark all current migrations as already applied."
+  );
+
   const journalPath = path.join(MIGRATIONS_FOLDER, "meta", "_journal.json");
   if (!fs.existsSync(journalPath)) {
     logger.error(`Journal not found at ${journalPath}`);
@@ -51,23 +91,6 @@ async function run() {
 
   const journal: Journal = JSON.parse(fs.readFileSync(journalPath, "utf-8"));
 
-  // 1. Make sure the tracking schema/table exists (mirrors what drizzle creates)
-  await database.execute(sql`CREATE SCHEMA IF NOT EXISTS "drizzle"`);
-  await database.execute(sql`
-    CREATE TABLE IF NOT EXISTS "drizzle"."__drizzle_migrations" (
-      id SERIAL PRIMARY KEY,
-      hash text NOT NULL,
-      created_at bigint
-    )
-  `);
-
-  // 2. Read what's already tracked
-  const existingResult = await database.execute<{ hash: string }>(
-    sql`SELECT hash FROM "drizzle"."__drizzle_migrations"`
-  );
-  const alreadyTracked = new Set(existingResult.rows.map((r) => r.hash));
-
-  let inserted = 0;
   for (const entry of journal.entries) {
     const sqlPath = path.join(MIGRATIONS_FOLDER, `${entry.tag}.sql`);
     if (!fs.existsSync(sqlPath)) {
@@ -76,27 +99,16 @@ async function run() {
     }
 
     const sqlContent = fs.readFileSync(sqlPath, "utf-8");
-    // Drizzle hashes the migration SQL with sha256 to identify applied versions
     const hash = crypto.createHash("sha256").update(sqlContent).digest("hex");
-
-    if (alreadyTracked.has(hash)) {
-      logger.info(`Already tracked: ${entry.tag}`);
-      continue;
-    }
 
     await database.execute(
       sql`INSERT INTO "drizzle"."__drizzle_migrations" (hash, created_at)
           VALUES (${hash}, ${entry.when})`
     );
     logger.info(`Marked as applied: ${entry.tag} (${hash.slice(0, 12)}…)`);
-    inserted += 1;
   }
 
-  if (inserted === 0) {
-    logger.info("Baseline already complete — no rows inserted.");
-  } else {
-    logger.info(`Baseline complete — ${inserted} migration(s) marked applied.`);
-  }
+  logger.info("Baseline complete.");
 }
 
 run()
