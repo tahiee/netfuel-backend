@@ -67,3 +67,5 @@ app.use(errorHandler);
 httpServer.listen(port, () => {
   logger.info(`Server listening on port ${port}`);
 });
+
+// check server
