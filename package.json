@@ -11,6 +11,7 @@
     "dbgenerate": "drizzle-kit generate",
     "dbpush": "drizzle-kit push",
     "dbmigrate": "ts-node -r tsconfig-paths/register src/scripts/migrate.ts",
+    "dbbaseline": "ts-node -r tsconfig-paths/register src/scripts/baseline.ts",
     "dbstudio": "drizzle-kit studio --port 4983",
     "dbdrop": "drizzle-kit drop",
     "dbintrospect": "drizzle-kit introspect",
