@@ -18,12 +18,14 @@ jobs:
           SSH_USER: ${{ secrets.SSH_USER }}
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          NETFUEL_ACCESS_TOKEN: ${{ secrets.NETFUEL_ACCESS_TOKEN }}
         run: |
           missing=
           [ -z "$SSH_HOST" ] && missing="${missing} SSH_HOST"
           [ -z "$SSH_USER" ] && missing="${missing} SSH_USER"
           [ -z "$SSH_PRIVATE_KEY" ] && missing="${missing} SSH_PRIVATE_KEY"
           [ -z "$DEPLOY_PATH" ] && missing="${missing} DEPLOY_PATH"
+          [ -z "$NETFUEL_ACCESS_TOKEN" ] && missing="${missing} NETFUEL_ACCESS_TOKEN"
           if [ -n "$missing" ]; then
             echo "::error::Missing secrets:$missing"
             exit 1
@@ -35,11 +37,13 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          envs: NETFUEL_ACCESS_TOKEN
           script: |
             set -e
             cd ${{ secrets.DEPLOY_PATH }}
+            git remote set-url origin https://x-access-token:${NETFUEL_ACCESS_TOKEN}@github.com/tahiee/netfuel-backend.git
             git fetch origin main
             git reset --hard origin/main
             npm install
             npm run build
-            pm2 restart netfuel-api
+            pm2 restart netfuel-backend
