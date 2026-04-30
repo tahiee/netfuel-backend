@@ -17,6 +17,16 @@ const schemaObject = z.object({
     .default("change-me-in-production-use-at-least-32-random-chars"),
   SENDGRID_API_KEY: z.string().optional(),
   SENDGRID_SENDER: z.string().email().default("noreply@netfuel.ai"),
+
+  // AI provider API keys — server-side credentials used by the query executor.
+  // Each is optional: if missing, the relevant provider is skipped at runtime
+  // with a "provider not configured" status instead of crashing the request.
+  OPENAI_API_KEY: z.string().optional(),
+  ANTHROPIC_API_KEY: z.string().optional(),
+  GOOGLE_AI_KEY: z.string().optional(),
+  PERPLEXITY_API_KEY: z.string().optional(),
+  XAI_API_KEY: z.string().optional(),     // Grok
+  GROQ_API_KEY: z.string().optional(),    // Llama via Groq
 });
 
 const envSchema = schemaObject.safeParse(process.env);

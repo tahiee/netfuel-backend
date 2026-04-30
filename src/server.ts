@@ -18,6 +18,8 @@ import { notFound } from "@/middlewares/not-found.middleware";
 import healthRoutes from "@/routes/health.routes";
 import authRoutes from "@/routes/auth.routes";
 import userRoutes from "@/routes/user.routes";
+import brandRoutes from "@/routes/brand.routes";
+import brandQueryRoutes from "@/routes/brandQuery.routes";
 
 config();
 
@@ -60,6 +62,8 @@ app.use(urlEncodedBody);
 
 app.use("/api", healthRoutes);
 app.use("/api/users", userRoutes);
+app.use("/api/brands", brandRoutes);
+app.use("/api/queries", brandQueryRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

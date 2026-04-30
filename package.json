@@ -6,7 +6,8 @@
   "repository": "",
   "scripts": {
     "build": "tsc && tsc-alias",
-    "dev": "ts-node-dev -r tsconfig-paths/register src/server.ts",
+    "dev": "ts-node-dev --transpile-only --no-notify --respawn --ignore-watch node_modules -r tsconfig-paths/register src/server.ts",
+    "typecheck": "tsc --noEmit",
     "start": "node dist/src/server.js",
     "dbgenerate": "drizzle-kit generate",
     "dbpush": "drizzle-kit push",
