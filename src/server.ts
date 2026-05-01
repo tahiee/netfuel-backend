@@ -20,6 +20,7 @@ import authRoutes from "@/routes/auth.routes";
 import userRoutes from "@/routes/user.routes";
 import brandRoutes from "@/routes/brand.routes";
 import brandQueryRoutes from "@/routes/brandQuery.routes";
+import aiRunRoutes from "@/routes/aiRun.routes";
 
 config();
 
@@ -64,6 +65,7 @@ app.use("/api", healthRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/brands", brandRoutes);
 app.use("/api/queries", brandQueryRoutes);
+app.use("/api/runs", aiRunRoutes);
 
 app.use(notFound);
 app.use(errorHandler);
